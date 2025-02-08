@@ -27,8 +27,9 @@ def main(data_folder_name, config_ag_folder_name):
     for exp in range(1, 5):
         filename = f"explorer_{exp:1d}_config.txt"
         explorer_file = os.path.join(config_ag_folder, filename)
-        initial_directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
-        Explorer(env, explorer_file, master_rescuer,initial_directions[exp - 1])
+        print(explorer_file)
+        initial_directions = [0,2,4,6]
+        Explorer(env, explorer_file, initial_directions[exp - 1],master_rescuer)
 
     # Run the environment simulator
     env.run()
@@ -41,7 +42,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         data_folder_name = sys.argv[1]
     else:
-        data_folder_name = os.path.join("datasets", "data_300v_90x90")
+        data_folder_name = os.path.join("datasets", "data_300v_90X90")
         config_ag_folder_name = os.path.join("cfg_1")
         
     main(data_folder_name, config_ag_folder_name)

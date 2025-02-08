@@ -1,18 +1,19 @@
-##  RESCUER AGENT
-### @Author: Tacla (UTFPR)
-### Demo of use of VictimSim
-### This rescuer version implements:
-### - clustering of victims by quadrants of the explored region 
-### - definition of a sequence of rescue of victims of a cluster
-### - assigning one cluster to one rescuer
-### - calculating paths between pair of victims using breadth-first search
-###
-### One of the rescuers is the master in charge of unifying the maps and the information
-### about the found victims.
+"""
+RESCUER AGENT
+@Author: Tacla (UTFPR) / Adaptado para retorno dinâmico
+
+Esta versão do agente Rescuer implementa:
+- Agrupamento (clustering) de vítimas por quadrantes da região explorada.
+- Definição de uma sequência de resgate para os clusters.
+- Atribuição de um cluster para cada resgatador.
+- Cálculo de trajetos entre pares de vítimas utilizando busca em largura (BFS).
+
+Além disso, integra uma estratégia dinâmica de retorno para evitar que o agente fique sem tempo,
+replanejando o caminho para a base se o custo estimado do plano exceder o tempo restante.
+"""
 
 import os
 import random
-import math
 import csv
 import sys
 from map import Map
@@ -23,36 +24,32 @@ from bfs import BFS
 from abc import ABC, abstractmethod
 
 
-## Classe que define o Agente Rescuer com um plano fixo
 class Rescuer(AbstAgent):
-    def __init__(self, env, config_file, nb_of_explorers=1,clusters=[]):
+    def __init__(self, env, config_file, nb_of_explorers=1, clusters=[]):
         """ 
-        @param env: a reference to an instance of the environment class
-        @param config_file: the absolute path to the agent's config file
-        @param nb_of_explorers: number of explorer agents to wait for
-        @param clusters: list of clusters of victims in the charge of this agent"""
-
+        @param env: referência à instância do ambiente
+        @param config_file: caminho absoluto para o arquivo de configuração do agente
+        @param nb_of_explorers: número de exploradores a serem aguardados
+        @param clusters: lista de clusters de vítimas sob responsabilidade deste agente
+        """
         super().__init__(env, config_file)
 
-        # Specific initialization for the rescuer
-        self.nb_of_explorers = nb_of_explorers       # number of explorer agents to wait for start
-        self.received_maps = 0                       # counts the number of explorers' maps
-        self.map = Map()                             # explorer will pass the map
-        self.victims = {}            # a dictionary of found victims: [vic_id]: ((x,y), [<vs>])
-        self.plan = []               # a list of planned actions in increments of x and y
-        self.plan_x = 0              # the x position of the rescuer during the planning phase
-        self.plan_y = 0              # the y position of the rescuer during the planning phase
-        self.plan_visited = set()    # positions already planned to be visited 
-        self.plan_rtime = self.TLIM  # the remaing time during the planning phase
-        self.plan_walk_time = 0.0    # previewed time to walk during rescue
-        self.x = 0                   # the current x position of the rescuer when executing the plan
-        self.y = 0                   # the current y position of the rescuer when executing the plan
-        self.clusters = clusters     # the clusters of victims this agent should take care of - see the method cluster_victims
-        self.sequences = clusters    # the sequence of visit of victims for each cluster 
-        
-                
-        # Starts in IDLE state.
-        # It changes to ACTIVE when the map arrives
+        # Inicializações específicas do agente resgatador
+        self.nb_of_explorers = nb_of_explorers       # número de exploradores para aguardar
+        self.received_maps = 0                        # contador dos mapas recebidos
+        self.map = Map()                              # o mapa recebido dos exploradores
+        self.victims = {}                             # dicionário de vítimas encontradas: [vic_id]: ((x,y), [<vs>])
+        self.plan = []                                # plano de ações (lista de pares dx, dy)
+        self.plan_x = 0                               # posição x durante a fase de planejamento
+        self.plan_y = 0                               # posição y durante a fase de planejamento
+        self.plan_visited = set()                       # posições já planejadas
+        self.plan_rtime = self.TLIM                   # tempo restante previsto durante o planejamento
+        self.x = 0                                    # posição x atual do agente
+        self.y = 0                                    # posição y atual do agente
+        self.clusters = clusters                      # clusters de vítimas atribuídos ao agente
+        self.sequences = clusters                     # sequência de resgate para cada cluster
+
+        # Inicializa o agente no estado IDLE; o estado muda para ACTIVE quando o mapa é recebido
         self.set_state(VS.IDLE)
 
     def save_cluster_csv(self, cluster, cluster_id):
@@ -60,8 +57,8 @@ class Rescuer(AbstAgent):
         with open(filename, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             for vic_id, values in cluster.items():
-                x, y = values[0]      # x,y coordinates
-                vs = values[1]        # list of vital signals
+                x, y = values[0]      # coordenadas x,y
+                vs = values[1]        # lista de sinais vitais
                 writer.writerow([vic_id, x, y, vs[6], vs[7]])
 
     def save_sequence_csv(self, sequence, sequence_id):
@@ -69,47 +66,41 @@ class Rescuer(AbstAgent):
         with open(filename, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             for id, values in sequence.items():
-                x, y = values[0]      # x,y coordinates
-                vs = values[1]        # list of vital signals
+                x, y = values[0]      # coordenadas x,y
+                vs = values[1]        # lista de sinais vitais
                 writer.writerow([id, x, y, vs[6], vs[7]])
 
     def cluster_victims(self):
-        """ this method does a naive clustering of victims per quadrant: victims in the
-            upper left quadrant compose a cluster, victims in the upper right quadrant, another one, and so on.
-            
-            @returns: a list of clusters where each cluster is a dictionary in the format [vic_id]: ((x,y), [<vs>])
-                      such as vic_id is the victim id, (x,y) is the victim's position, and [<vs>] the list of vital signals
-                      including the severity value and the corresponding label"""
-
-
-        # Find the upper and lower limits for x and y
+        """
+        Realiza um agrupamento simples das vítimas por quadrantes da área explorada.
+        @returns: lista de clusters (cada cluster é um dicionário com [vic_id]: ((x,y), [<vs>]))
+        """
+        # Determina os limites inferior e superior para x e y
         lower_xlim = sys.maxsize    
         lower_ylim = sys.maxsize
         upper_xlim = -sys.maxsize - 1
         upper_ylim = -sys.maxsize - 1
 
-        vic = self.victims
-    
         for key, values in self.victims.items():
             x, y = values[0]
-            lower_xlim = min(lower_xlim, x) 
+            lower_xlim = min(lower_xlim, x)
             upper_xlim = max(upper_xlim, x)
             lower_ylim = min(lower_ylim, y)
             upper_ylim = max(upper_ylim, y)
         
-        # Calculate midpoints
+        # Calcula os pontos médios
         mid_x = lower_xlim + (upper_xlim - lower_xlim) / 2
         mid_y = lower_ylim + (upper_ylim - lower_ylim) / 2
         print(f"{self.NAME} ({lower_xlim}, {lower_ylim}) - ({upper_xlim}, {upper_ylim})")
         print(f"{self.NAME} cluster mid_x, mid_y = {mid_x}, {mid_y}")
     
-        # Divide dictionary into quadrants
+        # Divide as vítimas em quadrantes
         upper_left = {}
         upper_right = {}
         lower_left = {}
         lower_right = {}
         
-        for key, values in self.victims.items():  # values are pairs: ((x,y), [<vital signals list>])
+        for key, values in self.victims.items():
             x, y = values[0]
             if x <= mid_x:
                 if y <= mid_y:
@@ -125,168 +116,192 @@ class Rescuer(AbstAgent):
         return [upper_left, upper_right, lower_left, lower_right]
 
     def predict_severity_and_class(self):
-        """ @TODO to be replaced by a classifier and a regressor to calculate the class of severity and the severity values.
-            This method should add the vital signals(vs) of the self.victims dictionary with these two values.
-
-            This implementation assigns random values to both, severity value and class"""
-
+        """
+        @TODO: Substituir por um classificador e um regressor para determinar a gravidade e a classe da vítima.
+        Nesta implementação, valores aleatórios são atribuídos.
+        """
         for vic_id, values in self.victims.items():
-            severity_value = random.uniform(0.1, 99.9)          # to be replaced by a regressor 
-            severity_class = random.randint(1, 4)               # to be replaced by a classifier
-            values[1].extend([severity_value, severity_class])  # append to the list of vital signals; values is a pair( (x,y), [<vital signals list>] )
-
+            severity_value = random.uniform(0.1, 99.9)          # a ser substituído por um regressor 
+            severity_class = random.randint(1, 4)               # a ser substituído por um classificador
+            values[1].extend([severity_value, severity_class])  # adiciona ao final da lista de sinais vitais
 
     def sequencing(self):
-        """ Currently, this method sort the victims by the x coordinate followed by the y coordinate
-            @TODO It must be replaced by a Genetic Algorithm that finds the possibly best visiting order """
-
-        """ We consider an agent may have different sequences of rescue. The idea is the rescuer can execute
-            sequence[0], sequence[1], ...
-            A sequence is a dictionary with the following structure: [vic_id]: ((x,y), [<vs>]"""
-
+        """
+        Ordena as vítimas (em cada cluster) pelo valor das coordenadas (ex.: x seguido de y).
+        @TODO: Substituir por algoritmo de otimização (por exemplo, Algoritmo Genético) para obter a melhor sequência.
+        """
         new_sequences = []
-
-        for seq in self.sequences:   # a list of sequences, being each sequence a dictionary
+        for seq in self.sequences:   # cada sequência é um dicionário
             seq = dict(sorted(seq.items(), key=lambda item: item[1]))
-            new_sequences.append(seq)       
-            #print(f"{self.NAME} sequence of visit:\n{seq}\n")
-
+            new_sequences.append(seq)
         self.sequences = new_sequences
 
     def planner(self):
-        """ A method that calculates the path between victims: walk actions in a OFF-LINE MANNER (the agent plans, stores the plan, and
-            after it executes. Eeach element of the plan is a pair dx, dy that defines the increments for the the x-axis and  y-axis."""
-
-
-        # let's instantiate the breadth-first search
+        """
+        Calcula, de forma offline, o caminho entre vítimas utilizando busca em largura (BFS).
+        A partir da base (0,0), gera um plano de movimento (lista de pares dx, dy) para visitar as vítimas e retornar à base.
+        """
         bfs = BFS(self.map, self.COST_LINE, self.COST_DIAG)
 
-        # for each victim of the first sequence of rescue for this agent, we're going go calculate a path
-        # starting at the base - always at (0,0) in relative coords
-        
-        if not self.sequences:   # no sequence assigned to the agent, nothing to do
+        # Se não houver sequência atribuída, não há nada a fazer.
+        if not self.sequences:
             return
 
-        # we consider only the first sequence (the simpler case)
-        # The victims are sorted by x followed by y positions: [vic_id]: ((x,y), [<vs>]
-
+        # Considera apenas a primeira sequência (caso mais simples)
         sequence = self.sequences[0]
-        start = (0,0) # always from starting at the base
+        start = (0, 0)  # inicia sempre na base
         for vic_id in sequence:
             goal = sequence[vic_id][0]
-            plan, time = bfs.search(start, goal, self.plan_rtime)
-            self.plan = self.plan + plan
-            self.plan_rtime = self.plan_rtime - time
+            plan_segment, time_taken = bfs.search(start, goal, self.plan_rtime)
+            self.plan += plan_segment
+            self.plan_rtime -= time_taken
             start = goal
 
-        # Plan to come back to the base
-        goal = (0,0)
-        plan, time = bfs.search(start, goal, self.plan_rtime)
-        self.plan = self.plan + plan
-        self.plan_rtime = self.plan_rtime - time
-           
+        # Planeja o retorno à base
+        goal = (0, 0)
+        plan_segment, time_taken = bfs.search(start, goal, self.plan_rtime)
+        self.plan += plan_segment
+        self.plan_rtime -= time_taken
 
     def sync_explorers(self, explorer_map, victims):
-        """ This method should be invoked only to the master agent
-
-        Each explorer sends the map containing the obstacles and
-        victims' location. The master rescuer updates its map with the
-        received one. It does the same for the victims' vital signals.
-        After, it should classify each severity of each victim (critical, ..., stable);
-        Following, using some clustering method, it should group the victims and
-        and pass one (or more)clusters to each rescuer """
-
+        """
+        Método chamado pelo agente mestre para unificar o mapa e as informações das vítimas
+        enviadas pelos exploradores.
+        """
         self.received_maps += 1
-
-        print(f"{self.NAME} Map received from the explorer")
+        print(f"{self.NAME} Map recebido de um explorador")
         self.map.update(explorer_map)
         self.victims.update(victims)
 
         if self.received_maps == self.nb_of_explorers:
-            print(f"{self.NAME} all maps received from the explorers")
-            #self.map.draw()
-            #print(f"{self.NAME} found victims by all explorers:\n{self.victims}")
+            print(f"{self.NAME} todos os mapas dos exploradores foram recebidos")
+            #@TODO: Invocar método para desenhar o mapa, se necessário
+            #print(f"{self.NAME} vítimas encontradas:\n{self.victims}")
 
-            #@TODO predict the severity and the class of victims' using a classifier
+            # Prediz a gravidade e a classe das vítimas
             self.predict_severity_and_class()
 
-            #@TODO cluster the victims possibly using the severity and other criteria
-            # Here, there 4 clusters
+            # Agrupa as vítimas em 4 clusters
             clusters_of_vic = self.cluster_victims()
 
             for i, cluster in enumerate(clusters_of_vic):
-                self.save_cluster_csv(cluster, i+1)    # file names start at 1
+                self.save_cluster_csv(cluster, i + 1)
   
-            # Instantiate the other rescuers
+            # Instancia os demais resgatadores (caso haja)
             rescuers = [None] * 4
-            rescuers[0] = self                    # the master rescuer is the index 0 agent
+            rescuers[0] = self  # o agente mestre é o índice 0
 
-            # Assign the cluster the master agent is in charge of 
-            self.clusters = [clusters_of_vic[0]]  # the first one
+            # Atribui ao mestre o primeiro cluster
+            self.clusters = [clusters_of_vic[0]]
 
-            # Instantiate the other rescuers and assign the clusters to them
-            for i in range(1, 4):    
-                #print(f"{self.NAME} instantianting rescuer {i+1}, {self.get_env()}")
+            # Instancia os demais resgatadores e atribui um cluster para cada
+            for i in range(1, 4):
                 filename = f"rescuer_{i+1:1d}_config.txt"
                 config_file = os.path.join(self.config_folder, filename)
-                # each rescuer receives one cluster of victims
-                rescuers[i] = Rescuer(self.get_env(), config_file, 4, [clusters_of_vic[i]]) 
-                rescuers[i].map = self.map     # each rescuer have the map
+                rescuers[i] = Rescuer(self.get_env(), config_file, 4, [clusters_of_vic[i]])
+                rescuers[i].map = self.map
 
-            
-            # Calculate the sequence of rescue for each agent
-            # In this case, each agent has just one cluster and one sequence
-            self.sequences = self.clusters         
+            # Define as sequências de resgate (neste exemplo, cada agente possui um cluster)
+            self.sequences = self.clusters
 
-            # For each rescuer, we calculate the rescue sequence 
+            # Para cada resgatador, ordena a sequência e calcula o plano de resgate
             for i, rescuer in enumerate(rescuers):
-                rescuer.sequencing()         # the sequencing will reorder the cluster
-                
+                rescuer.sequencing()
                 for j, sequence in enumerate(rescuer.sequences):
                     if j == 0:
-                        self.save_sequence_csv(sequence, i+1)              # primeira sequencia do 1o. cluster 1: seq1 
+                        self.save_sequence_csv(sequence, i + 1)
                     else:
-                        self.save_sequence_csv(sequence, (i+1)+ j*10)      # demais sequencias do 1o. cluster: seq11, seq12, seq13, ...
+                        self.save_sequence_csv(sequence, (i + 1) + j * 10)
+                rescuer.planner()
+                rescuer.set_state(VS.ACTIVE)
 
+    # ========================
+    # Métodos de Retorno Dinâmico
+    # ========================
 
-                rescuer.planner()            # make the plan for the trajectory
-                rescuer.set_state(VS.ACTIVE) # from now, the simulator calls the deliberation method
-         
-        
+    def tempo_restante(self):
+        """
+        Retorna o tempo restante para o agente (assume-se que AbstAgent fornece get_rtime()).
+        """
+        return self.get_rtime()
+
+    def custo_estimado(self, plan):
+        """
+        Estima o custo para executar o plano atual.
+        Para cada passo, se o movimento for diagonal, usa o custo COST_DIAG;
+        caso contrário, usa COST_LINE.
+        """
+        cost = 0
+        for (dx, dy) in plan:
+            if abs(dx) == 1 and abs(dy) == 1:
+                cost += self.COST_DIAG
+            else:
+                cost += self.COST_LINE
+        return cost
+
+    def recalcular_caminho_para_base(self):
+        """
+        Em situação de emergência (tempo insuficiente ou falha no movimento),
+        tenta recalcular um caminho seguro até a base (posição (0,0)) utilizando BFS.
+        @returns: um novo plano (lista de movimentos) ou None se não for possível encontrar um caminho.
+        """
+        bfs_instance = BFS(self.map, self.COST_LINE, self.COST_DIAG)
+        start = (self.x, self.y)
+        goal = (0, 0)
+        plan, time_taken = bfs_instance.search(start, goal, self.get_rtime())
+        if plan and len(plan) > 0:
+            print(f"{self.NAME}: novo plano calculado para retornar à base.")
+            return plan
+        else:
+            print(f"{self.NAME}: falha ao recalcular caminho para a base!")
+            return None
+
+    # ========================
+    # Método de Deliberação (Loop Principal)
+    # ========================
+
     def deliberate(self) -> bool:
-        """ This is the choice of the next action. The simulator calls this
-        method at each reasonning cycle if the agent is ACTIVE.
-        Must be implemented in every agent
-        @return True: there's one or more actions to do
-        @return False: there's no more action to do """
+        """
+        Método chamado a cada ciclo de raciocínio quando o agente está ACTIVE.
+        Retorna:
+          True  -> se ainda há ações a executar.
+          False -> se não há mais ações.
+        """
+        # Se não houver mais ações no plano, encerra
+        if not self.plan:
+            print(f"{self.NAME} finalizou o plano.")
+            return False
 
-        # No more actions to do
-        if self.plan == []:  # empty list, no more actions to do
-           print(f"{self.NAME} has finished the plan [ENTER]")
-           return False
+        # Verifica se o tempo restante é suficiente para completar o plano atual
+        remaining = self.tempo_restante()
+        estimated_cost = self.custo_estimado(self.plan)
+        if remaining < estimated_cost:
+            print(f"{self.NAME}: tempo insuficiente ({remaining}) para completar o plano (custo estimado: {estimated_cost}). Replanejando retorno...")
+            novo_plano = self.recalcular_caminho_para_base()
+            if novo_plano is not None:
+                self.plan = novo_plano
+            else:
+                print(f"{self.NAME}: não foi possível replanejar um caminho seguro!")
+                return False
 
-        # Takes the first action of the plan (walk action) and removes it from the plan
+        # Executa o próximo passo do plano
         dx, dy = self.plan.pop(0)
-        #print(f"{self.NAME} pop dx: {dx} dy: {dy} ")
-
-        # Walk - just one step per deliberation
-        walked = self.walk(dx, dy)
-
-        # Rescue the victim at the current position
-        if walked == VS.EXECUTED:
+        resultado = self.walk(dx, dy)
+        if resultado == VS.EXECUTED:
             self.x += dx
             self.y += dy
-            #print(f"{self.NAME} Walk ok - Rescuer at position ({self.x}, {self.y})")
-
-            # check if there is a victim at the current position
+            # Verifica se há vítima na posição atual e, se houver, realiza o resgate
             if self.map.in_map((self.x, self.y)):
                 vic_id = self.map.get_vic_id((self.x, self.y))
                 if vic_id != VS.NO_VICTIM:
                     self.first_aid()
-                    #if self.first_aid(): # True when rescued
-                        #print(f"{self.NAME} Victim rescued at ({self.x}, {self.y})")                    
         else:
-            print(f"{self.NAME} Plan fail - walk error - agent at ({self.x}, {self.x})")
-            
-        return True
+            print(f"{self.NAME}: erro ao executar movimento (dx: {dx}, dy: {dy}). Tentando replanejar retorno...")
+            novo_plano = self.recalcular_caminho_para_base()
+            if novo_plano is not None:
+                self.plan = novo_plano
+            else:
+                print(f"{self.NAME}: não foi possível replanejar após erro no movimento!")
+                return False
 
+        return True
