@@ -1,0 +1,1 @@
+{"hidden_layer_sizes": [[100, 100, 100], [100, 100, 100, 100], [100, 100]], "max_iter": [3000], "activation": ["tanh"], "solver": ["adam"], "alpha": [0.0001], "random_state": [42]}

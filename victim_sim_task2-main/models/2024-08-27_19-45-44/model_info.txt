@@ -1,0 +1,28 @@
+Decision Tree Parameters:
+{"criterion": "squared_error", "max_depth": 16, "min_samples_leaf": 2, "min_samples_split": 2, "random_state": 42, "splitter": "best"}
+
+MLP Parameters:
+{"activation": "logistic", "alpha": 0.0001, "hidden_layer_sizes": [200], "max_iter": 6000, "random_state": 42, "solver": "adam"}
+
+Best Decision Tree Model:
+DecisionTreeRegressor(max_depth=16, min_samples_leaf=2, random_state=42)
+
+MSE: 5.602584313555914
+Training Accuracy: 0.9967534989171207
+Test Accuracy: 0.978609006764286
+
+Best MLP Model:
+MLPRegressor(activation='logistic', hidden_layer_sizes=(200,), max_iter=6000,
+             random_state=42)
+
+MSE: 4.2503982820068
+Training Accuracy: 0.9850776137723235
+Test Accuracy: 0.9837717317917896
+
+Using 800v dataset:
+Decision Tree Model MSE Test: 6.6806298590568725
+Decision Tree Model Accuracy Test: 0.97446936049629
+MLP Model MSE Test: 3.815889552380686
+MLP Model Accuracy Test: 0.9854172282250108
+
+Execution Time: 497.37905383110046 seconds

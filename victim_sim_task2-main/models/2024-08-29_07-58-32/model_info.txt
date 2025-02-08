@@ -1,0 +1,29 @@
+Decision Tree Parameters:
+{"criterion": "squared_error", "max_depth": 16, "max_leaf_nodes": 200, "min_samples_leaf": 2, "min_samples_split": 2, "random_state": 42, "splitter": "best"}
+
+MLP Parameters:
+{"activation": "tanh", "alpha": 0.0001, "hidden_layer_sizes": [100, 100, 100, 100], "max_iter": 3000, "random_state": 42, "solver": "adam"}
+
+Best Decision Tree Model:
+DecisionTreeRegressor(max_depth=16, max_leaf_nodes=200, min_samples_leaf=2,
+                      random_state=42)
+
+MSE: 8.388041869290982
+Training Accuracy: 0.9819363376689397
+Test Accuracy: 0.9679739675755085
+
+Best MLP Model:
+MLPRegressor(activation='tanh', hidden_layer_sizes=(100, 100, 100, 100),
+             max_iter=3000, random_state=42)
+
+MSE: 0.6157297996259183
+Training Accuracy: 0.9985343784782578
+Test Accuracy: 0.9976491077614027
+
+Using 800v dataset:
+Decision Tree Model MSE Test: 10.706342167075356
+Decision Tree Model Accuracy Test: 0.9590847318235411
+MLP Model MSE Test: 0.709969707818763
+MLP Model Accuracy Test: 0.9972867856697222
+
+Execution Time: 160.80009245872498 seconds
