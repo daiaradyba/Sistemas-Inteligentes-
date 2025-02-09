@@ -16,13 +16,17 @@ import os
 import random
 import csv
 import sys
+import numpy as np
+import matplotlib.pyplot as plt
+
 from map import Map
 from vs.abstract_agent import AbstAgent
 from vs.physical_agent import PhysAgent
 from vs.constants import VS
 from bfs import BFS
 from abc import ABC, abstractmethod
-
+from sklearn.cluster import KMeans
+from typing import Tuple, List, Optional, Dict, Any
 
 class Rescuer(AbstAgent):
     def __init__(self, env, config_file, nb_of_explorers=1, clusters=[]):
@@ -70,51 +74,96 @@ class Rescuer(AbstAgent):
                 vs = values[1]        # lista de sinais vitais
                 writer.writerow([id, x, y, vs[6], vs[7]])
 
-    def cluster_victims(self):
+    def cluster_victims(self, balanced: bool = True) -> List[Dict[Any, Tuple[Tuple[int, int], List[Any]]]]:
         """
-        Realiza um agrupamento simples das vítimas por quadrantes da área explorada.
-        @returns: lista de clusters (cada cluster é um dicionário com [vic_id]: ((x,y), [<vs>]))
+        Realiza o agrupamento das vítimas utilizando o algoritmo KMeans, considerando as coordenadas (x, y)
+        e a gravidade (severity) presente nos sinais vitais (índice 6). Se o parâmetro 'balanced' for True,
+        procura distribuir as vítimas de forma uniforme entre os clusters.
+
+        :param balanced: Booleano que indica se os clusters devem ter tamanhos balanceados.
+        :return: Uma lista de 4 dicionários, onde cada dicionário representa um cluster no formato:
+                {victim_id: ((x, y), [vital_signals])}.
         """
-        # Determina os limites inferior e superior para x e y
-        lower_xlim = sys.maxsize    
-        lower_ylim = sys.maxsize
-        upper_xlim = -sys.maxsize - 1
-        upper_ylim = -sys.maxsize - 1
+        # Se não houver vítimas, retorna uma lista vazia
+        if not self.victims:
+            return []
 
-        for key, values in self.victims.items():
-            x, y = values[0]
-            lower_xlim = min(lower_xlim, x)
-            upper_xlim = max(upper_xlim, x)
-            lower_ylim = min(lower_ylim, y)
-            upper_ylim = max(upper_ylim, y)
-        
-        # Calcula os pontos médios
-        mid_x = lower_xlim + (upper_xlim - lower_xlim) / 2
-        mid_y = lower_ylim + (upper_ylim - lower_ylim) / 2
-        print(f"{self.NAME} ({lower_xlim}, {lower_ylim}) - ({upper_xlim}, {upper_ylim})")
-        print(f"{self.NAME} cluster mid_x, mid_y = {mid_x}, {mid_y}")
-    
-        # Divide as vítimas em quadrantes
-        upper_left = {}
-        upper_right = {}
-        lower_left = {}
-        lower_right = {}
-        
-        for key, values in self.victims.items():
-            x, y = values[0]
-            if x <= mid_x:
-                if y <= mid_y:
-                    upper_left[key] = values
-                else:
-                    lower_left[key] = values
-            else:
-                if y <= mid_y:
-                    upper_right[key] = values
-                else:
-                    lower_right[key] = values
-    
-        return [upper_left, upper_right, lower_left, lower_right]
+        # Converte o dicionário de vítimas para listas de IDs e características
+        victims_list = list(self.victims.items())
+        feature_list = []
+        victim_keys = []
 
+        # Para cada vítima, utiliza (x, y) e o valor de severity (índice 6) para formar o vetor de features
+        for vid, (position, signals) in victims_list:
+            x, y = position
+            severity = signals[6]
+            feature_list.append([x, y, severity])
+            victim_keys.append(vid)
+
+        features = np.array(feature_list)
+
+        # Define o número de clusters e aplica o KMeans
+        total_clusters = 4
+        kmeans = KMeans(n_clusters=total_clusters, init='k-means++', random_state=42)
+        cluster_ids = kmeans.fit_predict(features)
+        centroids = kmeans.cluster_centers_
+
+        # Inicializa uma lista de dicionários para armazenar os clusters
+        clusters = [{} for _ in range(total_clusters)]
+
+        if balanced:
+            total_victims = len(victim_keys)
+            # Determina a quantidade ideal de vítimas por cluster
+            ideal_counts = [total_victims // total_clusters] * total_clusters
+            for i in range(total_victims % total_clusters):
+                ideal_counts[i] += 1
+
+            overflow = []  # Armazena vítimas que excedem o tamanho ideal do cluster
+
+            # Primeira alocação: insere cada vítima no cluster sugerido pelo KMeans, se houver espaço
+            for idx, vid in enumerate(victim_keys):
+                assigned_cluster = cluster_ids[idx]
+                if len(clusters[assigned_cluster]) < ideal_counts[assigned_cluster]:
+                    clusters[assigned_cluster][vid] = self.victims[vid]
+                else:
+                    overflow.append((vid, self.victims[vid], features[idx]))
+
+            # Redistribuição: para cada vítima em excesso, procura o cluster mais próximo que ainda não atingiu o limite
+            for vid, victim_data, feat in overflow:
+                # Calcula a distância da vítima a cada centróide
+                dists = [np.linalg.norm(feat - centroids[i]) for i in range(total_clusters)]
+                sorted_clusters = np.argsort(dists)
+                placed = False
+                for cluster_idx in sorted_clusters:
+                    if len(clusters[cluster_idx]) < ideal_counts[cluster_idx]:
+                        clusters[cluster_idx][vid] = victim_data
+                        placed = True
+                        break
+                if not placed:
+                    # Se todos estiverem completos, adiciona àquele com menos vítimas
+                    min_cluster = np.argmin([len(c) for c in clusters])
+                    clusters[min_cluster][vid] = victim_data
+        else:
+            # Alocação simples baseada nos rótulos do KMeans
+            for idx, vid in enumerate(victim_keys):
+                clusters[cluster_ids[idx]][vid] = self.victims[vid]
+
+        # Cria o gráfico dos clusters utilizando apenas as coordenadas (x, y)
+        plt.figure(figsize=(10, 7))
+        cores = ['r', 'g', 'b', 'y']
+        for i in range(total_clusters):
+            pontos = features[cluster_ids == i, :2]
+            plt.scatter(pontos[:, 0], pontos[:, 1], color=cores[i], label=f'Cluster {i + 1}')
+        # Plota os centróides com marcador 'x'
+        plt.scatter(centroids[:, 0], centroids[:, 1], color='k', marker='x', s=100, label='Centroides')
+        plt.title('Agrupamento de Vítimas')
+        plt.xlabel('Coordenada X')
+        plt.ylabel('Coordenada Y')
+        plt.legend()
+        plt.savefig('agrupamento_vitimas.png')
+        plt.close()
+
+        return clusters
     def predict_severity_and_class(self):
         """
         @TODO: Substituir por um classificador e um regressor para determinar a gravidade e a classe da vítima.
@@ -180,6 +229,8 @@ class Rescuer(AbstAgent):
 
             # Prediz a gravidade e a classe das vítimas
             self.predict_severity_and_class()
+
+            print(f"Total de vítimas únicas: {len(self.victims)}")
 
             # Agrupa as vítimas em 4 clusters
             clusters_of_vic = self.cluster_victims()
