@@ -27,6 +27,7 @@ from bfs import BFS
 from abc import ABC, abstractmethod
 from sklearn.cluster import KMeans
 from typing import Tuple, List, Optional, Dict, Any
+from sklearn.preprocessing import StandardScaler
 
 class Rescuer(AbstAgent):
     def __init__(self, env, config_file, nb_of_explorers=1, clusters=[]):
@@ -74,6 +75,54 @@ class Rescuer(AbstAgent):
                 vs = values[1]        # lista de sinais vitais
                 writer.writerow([id, x, y, vs[6], vs[7]])
 
+    def cluster_victims_quadrants(self):
+        """
+        Agrupa as vítimas separando-as nos quatro quadrantes do mapa, forçando K-Means a usar inicialização fixa.
+        """
+        if not self.victims:
+            return []
+
+        # Extrai as coordenadas (x, y) das vítimas
+        victims_list = list(self.victims.items())
+        features = np.array([v[0] for _, v in victims_list])  # Coordenadas (x, y)
+
+        # Define centróides iniciais para os quadrantes
+        x_min, x_max = features[:, 0].min(), features[:, 0].max()
+        y_min, y_max = features[:, 1].min(), features[:, 1].max()
+
+        initial_centroids = np.array([
+            [x_max - (x_max - x_min) / 4, y_max - (y_max - y_min) / 4],  # Quadrante 1 (superior direito)
+            [x_min + (x_max - x_min) / 4, y_max - (y_max - y_min) / 4],  # Quadrante 2 (superior esquerdo)
+            [x_min + (x_max - x_min) / 4, y_min + (y_max - y_min) / 4],  # Quadrante 3 (inferior esquerdo)
+            [x_max - (x_max - x_min) / 4, y_min + (y_max - y_min) / 4]   # Quadrante 4 (inferior direito)
+        ])
+
+        # Aplica K-Means com centróides fixos
+        kmeans = KMeans(n_clusters=4, init=initial_centroids, n_init=1, random_state=42)
+        cluster_ids = kmeans.fit_predict(features)
+        centroids = kmeans.cluster_centers_
+
+        # Cria dicionários para armazenar os clusters
+        clusters = [{} for _ in range(4)]
+        for idx, (vid, data) in enumerate(victims_list):
+            clusters[cluster_ids[idx]][vid] = data
+
+        # Plotar os clusters e centróides
+        plt.figure(figsize=(10, 7))
+        cores = ['r', 'g', 'b', 'y']
+        for i in range(4):
+            pontos = features[cluster_ids == i]
+            plt.scatter(pontos[:, 0], pontos[:, 1], color=cores[i], label=f'Cluster {i + 1}')
+        plt.scatter(centroids[:, 0], centroids[:, 1], color='k', marker='x', s=100, label='Centroides')
+        plt.title('Agrupamento de Vítimas em Quadrantes')
+        plt.xlabel('Coordenada X')
+        plt.ylabel('Coordenada Y')
+        plt.legend()
+        plt.savefig('agrupamento_quadrantes.png')
+        plt.close()
+
+        return clusters
+    
     def cluster_victims(self, balanced: bool = True) -> List[Dict[Any, Tuple[Tuple[int, int], List[Any]]]]:
         """
         Realiza o agrupamento das vítimas utilizando o algoritmo KMeans, considerando as coordenadas (x, y)
@@ -102,11 +151,20 @@ class Rescuer(AbstAgent):
 
         features = np.array(feature_list)
 
+        # Normaliza os dados
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features)
+
+
+
         # Define o número de clusters e aplica o KMeans
         total_clusters = 4
         kmeans = KMeans(n_clusters=total_clusters, init='k-means++', random_state=42)
-        cluster_ids = kmeans.fit_predict(features)
+        cluster_ids = kmeans.fit_predict(features_scaled)
         centroids = kmeans.cluster_centers_
+
+        # Converte os centróides de volta para o espaço original
+        original_centroids = scaler.inverse_transform(centroids)
 
         # Inicializa uma lista de dicionários para armazenar os clusters
         clusters = [{} for _ in range(total_clusters)]
@@ -155,7 +213,8 @@ class Rescuer(AbstAgent):
             pontos = features[cluster_ids == i, :2]
             plt.scatter(pontos[:, 0], pontos[:, 1], color=cores[i], label=f'Cluster {i + 1}')
         # Plota os centróides com marcador 'x'
-        plt.scatter(centroids[:, 0], centroids[:, 1], color='k', marker='x', s=100, label='Centroides')
+        #plt.scatter(centroids[:, 0], centroids[:, 1], color='k', marker='x', s=100, label='Centroides')
+        plt.scatter(original_centroids[:, 0], original_centroids[:, 1], color='k', marker='x', s=100, label='Centroides')
         plt.title('Agrupamento de Vítimas')
         plt.xlabel('Coordenada X')
         plt.ylabel('Coordenada Y')
@@ -232,8 +291,11 @@ class Rescuer(AbstAgent):
 
             print(f"Total de vítimas únicas: {len(self.victims)}")
 
-            # Agrupa as vítimas em 4 clusters
+            # Agrupa as vítimas em 4 clusters, levando em conta severidade
             clusters_of_vic = self.cluster_victims()
+
+            # Agrupa as vítimas em 4 clusters, em 4 quadrantes fixos.
+            #clusters_of_vic = self.cluster_victims_quadrants()
 
             for i, cluster in enumerate(clusters_of_vic):
                 self.save_cluster_csv(cluster, i + 1)
